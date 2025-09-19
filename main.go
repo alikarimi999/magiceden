@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -28,7 +29,8 @@ var (
 	rpc2         = "https://testnet-rpc.monad.xyz"
 	rpc3         = "https://monad-testnet.gateway.tatum.io"
 	rpcs         = []string{rpc0, rpc1, rpc2, rpc3}
-	collectionId = ""
+	collectionId = "0x31b8ccf2294b9e98784bbb167dc8325e21d36cad"       // set your collection ID here
+	target       = time.Date(2025, 9, 19, 18, 30, 01, 10, time.Local) // set your target date here
 )
 
 type Chain string
@@ -41,6 +43,7 @@ type Kind string
 
 const (
 	AllowList Kind = "allowlist"
+	Public    Kind = "public"
 )
 
 type Protocol string
@@ -68,6 +71,7 @@ type MintResponse struct {
 // MintNFT calls Magic Eden API and executes the mint transaction
 func MintNFT(client *ethclient.Client, privateKeyHex, collectionId string, protocol Protocol, kind Kind,
 	chain Chain, tokenId int, chainId *big.Int) error {
+	// 4. Load private key
 	privateKey, err := crypto.HexToECDSA(privateKeyHex)
 	if err != nil {
 		return err
@@ -75,8 +79,9 @@ func MintNFT(client *ethclient.Client, privateKeyHex, collectionId string, proto
 	publicKey := privateKey.Public().(*ecdsa.PublicKey)
 	fromAddr := crypto.PubkeyToAddress(*publicKey)
 
+	// 1. Build API request payload
 	payload := map[string]interface{}{
-		"chain":        chain,
+		"chain":        chain, // or "monad-testnet" if fixed
 		"collectionId": collectionId,
 		"wallet": map[string]string{
 			"address": fromAddr.String(),
@@ -89,6 +94,7 @@ func MintNFT(client *ethclient.Client, privateKeyHex, collectionId string, proto
 	}
 	body, _ := json.Marshal(payload)
 
+	// 2. Call Magic Eden Launchpad API
 	req, err := http.NewRequest("POST", magicUrl, bytes.NewBuffer(body))
 	if err != nil {
 		return err
@@ -114,6 +120,7 @@ func MintNFT(client *ethclient.Client, privateKeyHex, collectionId string, proto
 
 	step := mintResp.Steps[0]
 
+	// 5. Build transaction
 	nonce, err := client.PendingNonceAt(context.Background(), fromAddr)
 	if err != nil {
 		return err
@@ -138,11 +145,14 @@ func MintNFT(client *ethclient.Client, privateKeyHex, collectionId string, proto
 
 	tx := types.NewTransaction(nonce, toAddr, value, gasLimit, gasPrice, data)
 
+	// 6. Sign transaction
+	// pass the chainId to the function for a faster operation
 	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(chainId), privateKey)
 	if err != nil {
 		return err
 	}
 
+	// 7. Send transaction
 	err = client.SendTransaction(context.Background(), signedTx)
 	if err != nil {
 		return err
@@ -150,6 +160,21 @@ func MintNFT(client *ethclient.Client, privateKeyHex, collectionId string, proto
 
 	fmt.Printf("✅ Mint transaction sent! Hash: %s\n", signedTx.Hash().Hex())
 	return nil
+}
+
+func counter(target time.Time) {
+	for {
+		remaining := time.Until(target)
+		if remaining <= 0 {
+			break
+		}
+		h := int(remaining.Hours())
+		m := int(remaining.Minutes()) % 60
+		s := int(remaining.Seconds()) % 60
+		fmt.Printf("\rCountdown: %02d:%02d:%02d", h, m, s)
+		time.Sleep(1 * time.Second)
+	}
+	fmt.Println("\nTime's up! Starting minting process...")
 }
 
 func main() {
@@ -180,14 +205,28 @@ func main() {
 	input := string(byteKey)
 	privateKeys := strings.Split(input, ",")
 
-	var wg sync.WaitGroup
+	now := time.Now()
+	// If the target time passed, start immediately
+	// If the target time is in the future, wait until that time
+	if target.After(now) {
+		go counter(target)
+		duration := time.Until(target)
 
+		timer := time.NewTimer(duration)
+		<-timer.C
+	}
+
+	var wg sync.WaitGroup
 	for _, key := range privateKeys {
 		wg.Add(1)
 		go func(pk string) {
 			defer wg.Done()
 			pk = strings.TrimSpace(pk)
-			if err := MintNFT(client, pk, collectionId, ERC1155, AllowList, monad,
+
+			// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+			//Remember to set the correct collectionId, protocol, kind, and chainId
+			// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+			if err := MintNFT(client, pk, collectionId, ERC1155, Public, monad,
 				0, chainId); err != nil {
 				log.Println("Error minting for", pk[:10]+"...", err)
 			}
