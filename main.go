@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -23,14 +22,20 @@ import (
 )
 
 var (
-	magicUrl     = "https://api-mainnet.magiceden.io/v4/self_serve/nft/mint_token"
-	rpc0         = "https://rpc.ankr.com/monad_testnet"
-	rpc1         = "https://monad-testnet.drpc.org"
-	rpc2         = "https://testnet-rpc.monad.xyz"
-	rpc3         = "https://monad-testnet.gateway.tatum.io"
-	rpcs         = []string{rpc0, rpc1, rpc2, rpc3}
-	collectionId = "0x31b8ccf2294b9e98784bbb167dc8325e21d36cad"       // set your collection ID here
-	target       = time.Date(2025, 9, 19, 18, 30, 01, 10, time.Local) // set your target date here
+	magicUrl = "https://api-mainnet.magiceden.io/v4/self_serve/nft/mint_token"
+	rpc0     = "https://rpc.ankr.com/monad_testnet"
+	rpc1     = "https://monad-testnet.drpc.org"
+	rpc2     = "https://testnet-rpc.monad.xyz"
+	rpc3     = "https://monad-testnet.gateway.tatum.io"
+	rpcs     = []string{rpc0, rpc1, rpc2, rpc3}
+
+	// set these
+	collectionId = "0xae52ca8e359f8ade8c0642dbc28f9fc4d1354a90" // set your collection ID here
+	protocol     = ERC1155
+	kind         = Public
+	publicRepeat = 10
+	target       = time.Date(2025, 9, 26, 15, 46, 8, 0, time.Local) // set your target date here
+
 )
 
 type Chain string
@@ -205,6 +210,18 @@ func main() {
 	input := string(byteKey)
 	privateKeys := strings.Split(input, ",")
 
+	// print imported addresses
+	for i, pk := range privateKeys {
+		pk = strings.TrimSpace(pk)
+		privateKey, err := crypto.HexToECDSA(pk)
+		if err != nil {
+			log.Println("Error importing private key:", err)
+			return
+		}
+		address := crypto.PubkeyToAddress(privateKey.PublicKey)
+		fmt.Printf("address-%d: %s\n", i, address.Hex())
+	}
+
 	now := time.Now()
 	// If the target time passed, start immediately
 	// If the target time is in the future, wait until that time
@@ -216,24 +233,30 @@ func main() {
 		<-timer.C
 	}
 
-	var wg sync.WaitGroup
 	for _, key := range privateKeys {
-		wg.Add(1)
 		go func(pk string) {
-			defer wg.Done()
 			pk = strings.TrimSpace(pk)
 
-			// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-			//Remember to set the correct collectionId, protocol, kind, and chainId
-			// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-			if err := MintNFT(client, pk, collectionId, ERC1155, Public, monad,
-				0, chainId); err != nil {
-				log.Println("Error minting for", pk[:10]+"...", err)
+			privateKey, _ := crypto.HexToECDSA(pk)
+			address := crypto.PubkeyToAddress(privateKey.PublicKey)
+			// Determine the number of times to repeat the minting process
+			repeat := 1
+			if kind == Public {
+				repeat = publicRepeat
 			}
+			for i := 0; i < repeat; i++ {
+				go func() {
+					fmt.Println("Try Mint: ", address, " - ", i)
+					if err := MintNFT(client, pk, collectionId, protocol, kind, monad,
+						0, chainId); err != nil {
+						log.Println("Error minting for", address.Hex()+"...", err)
+					}
+				}()
+				time.Sleep(time.Duration(i+2) * time.Nanosecond)
+			}
+
 		}(key)
 	}
 
-	wg.Wait()
-	fmt.Println("All minting tasks finished.")
-
+	select {}
 }
